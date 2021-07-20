@@ -113,6 +113,13 @@ class wasm (m: Tast.fact_module) =
     | Ref (bty, _) -> visit#is_secret bty
     | _ -> raise @@ cerr p "unimp secret"
   
+  method is_signed {pos=p;data} =
+    match data with
+    | UInt (_, _) -> false
+    | Int (_, _) -> true
+    | Ref (bty, _) -> visit#is_signed bty
+    | _ -> raise @@ cerr p "unimp is_signed"
+  
   method int_bitwidth {pos=p;data} = 
     match data with 
     | Bool _ -> 1
@@ -301,8 +308,8 @@ class wasm (m: Tast.fact_module) =
         let (_, arr_ty) = e in
         let arr_ty = visit#arr_bty arr_ty in (* the underlying type of the array *)
         let newsize = visit#int_bitwidth arr_ty in
-        let oldsize = if newsize <= 32 then 32 else newsize in
-        let is_signed = Tast_util.is_signed arr_ty in
+        let oldsize = if (newsize <= 32) then 32 else newsize in
+        let is_signed = visit#is_signed arr_ty in
         let prefix = if (visit#is_secret arr_ty) then "s" else "i" in
         let mem = if (visit#is_secret arr_ty) then "0" else "1" in
         let load = sprintf "(%s.load %s %s)"
