@@ -7,6 +7,18 @@ open Pseudocode
 open Printf
 open Codegen
 
+(* https://stackoverflow.com/questions/8373460/substring-check-in-ocaml *)
+let contains s1 s2 =
+    let re = Str.regexp_string s2
+    in
+        try ignore (Str.search_forward re s1 0); true
+        with Not_found -> false
+
+(* replace all instances of a in orig with b *)
+let replace orig a b = 
+  let re = Str.regexp_string a
+  in Str.global_replace re b orig
+
 class local_collector m =
   object (visit)
     inherit Tastmap.tast_visitor m as super
@@ -452,6 +464,13 @@ class wasm (m: Tast.fact_module) =
       "(set_global $srsp (get_local $srbp)) "
     ^ "(set_global $prsp (get_local $prbp)) "
 
+  method references_rsp body = 
+    (contains body "$srsp") || (contains body "$prsp")
+
+  method remove_rsp_bkp_rst body = 
+    let no_init = replace body (visit#init_rbps()) "" in
+    (replace no_init (visit#restore_rsps()) "")
+
   method fdec ({pos=p; data} as fdec) = 
     match data with
       | FunDec(name, fnattr, rt, params, body) -> 
@@ -463,12 +482,27 @@ class wasm (m: Tast.fact_module) =
         let vars = collect_locals fdec in
         append res ((List.map visit#local vars |> String.concat " ") ^ " ");
 
+        let body = visit#block body in
+
         append res (visit#init_rbps());
-        append res (visit#block body);
+        append res body;
         append res (visit#restore_rsps());
 
         append res ")";
-        res.contents
+        
+        let res_without_rsp_bkp_rst = visit#remove_rsp_bkp_rst res.contents in
+        (*
+          quick and dirty optimization: if the body does not reference $prsp or $srsp (& thus cannot modify them), 
+          then avoid generating backup & restore routines for them
+        *)
+        (* Printf.printf "test: %s\n" (res_without_rsp_bkp_rst); *)
+        let references_rsp = visit#references_rsp res_without_rsp_bkp_rst in
+        (* Printf.printf "references: %b\n" references_rsp; *)
+        if(not references_rsp) then (
+          res_without_rsp_bkp_rst
+        ) else (
+          res.contents
+        )
       | StdlibFn(code, fnattr, rt, params) -> 
         begin
           match code with
