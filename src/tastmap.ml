@@ -167,6 +167,9 @@ class tast_visitor (m : fact_module) =
             let e2' = visit#expr e2 in
             let e3' = visit#expr e3 in
               Select (e1',e2',e3')
+          | Bint (bty, e1) -> 
+            let e1' = visit#expr e1 in
+              Bint (bty, e1')
           | Declassify e ->
             let e' = visit#expr e in
               Declassify e'

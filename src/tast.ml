@@ -64,6 +64,7 @@ and expr' =
   | Declassify of expr
   | Classify of expr
   (* Non-blessable *)
+  | Bint of base_type * expr
   | Enref of expr
   | Deref of expr
   | ArrayGet of expr * lexpr

@@ -430,6 +430,12 @@ class codegen no_inline_asm llctx llmod m =
                 build_load loc "" _b
             else
               visit#_get x
+          | Bint (ity, e) -> 
+            let lle1 = visit#expr e in
+            let lle2 = visit#expr (make_ast p (IntLiteral 1), ity) in
+            let lle3 = visit#expr (make_ast p (IntLiteral 0), ity) in
+            let select = _get_intrinsic (_select_of_choice (integer_bitwidth llbty)) in
+              build_call select [| lle1; lle2; lle3 |] "" _b
           | Cast (castty,e) ->
             let lle = visit#expr e in
             let llcastty = visit#bty castty in

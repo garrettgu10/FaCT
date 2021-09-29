@@ -80,7 +80,7 @@ let rec build_cast pos prefix oldsize newsize is_signed wasmexpr =
   | (32, 64, true) -> 
     sprintf "(%s%d.extend%d_s %s)" prefix newsize oldsize wasmexpr
   | (8, 64, false) | (16, 64, false) | (32, 64, false) ->
-    sprintf "(%s%d.extend_i32_u %s)" prefix newsize wasmexpr
+    sprintf "(%s%d.extend_%s32_u %s)" prefix newsize prefix wasmexpr
   | (64, 32, _) -> 
     sprintf "(%s32.wrap_%s64 %s)" prefix prefix wasmexpr
   | (64, 16, _) | (64, 8, _) -> 
@@ -243,13 +243,9 @@ class wasm (m: Tast.fact_module) =
         sprintf "(%s.lt_%s %s %s)" bty sign we1 we2
       | Ast.LTE -> 
         sprintf "(%s.le_%s %s %s)" bty sign we1 we2
-      | Ast.LogicalAnd -> 
-        sprintf "(%s.and %s %s)" bty (to_bool we1 bty) (to_bool we2 bty)
-      | Ast.BitwiseAnd ->
+      | Ast.LogicalAnd | Ast.BitwiseAnd ->
         sprintf "(%s.and %s %s)" bty we1 we2
-      | Ast.LogicalOr -> 
-        sprintf "(%s.or %s %s)" bty (to_bool we1 bty) (to_bool we2 bty)
-      | Ast.BitwiseOr ->
+      | Ast.LogicalOr | Ast.BitwiseOr ->
         sprintf "(%s.or %s %s)" bty we1 we2
       | Ast.BitwiseXor -> sprintf "(%s.xor %s %s)" bty we1 we2
       | Ast.LeftShift -> sprintf "(%s.shl %s %s)" bty we1 we2
@@ -301,6 +297,13 @@ class wasm (m: Tast.fact_module) =
           visit#binop p op is_signed we1 we2 (visit#bty e1ty)
       | Classify e -> sprintf "(%s.classify %s)" wbty (visit#expr e)
       | Declassify e -> sprintf "(%s.declassify %s)" wbty (visit#expr e)
+      | Bint (ity, e) -> (* casting a boolean to an int *)
+        let we = visit#expr e in
+        let oldsize = 32 in
+        let newsize = visit#int_bitwidth ity in
+        let is_signed = false in (* bools are unsigned *)
+        let prefix = if (visit#is_secret ity) then "s" else "i" in
+        build_cast p prefix oldsize newsize is_signed we 
       | TernOp (cond, e1, e2) | Select (cond, e1, e2) -> 
         let wcond = visit#expr cond in
         let we1 = visit#expr e1 in
@@ -413,6 +416,45 @@ class wasm (m: Tast.fact_module) =
       | VoidFnCall (fn, args) -> (visit#fcall fn args)
       | Assume e -> ""
 
+      
+  method slow_range_for wbty sign winame e2 blk = 
+    (sprintf 
+      "(block (loop (br_if 1 (%s.ge_%s (get_local %s) %s)) %s (set_local %s (%s.add (get_local %s) (%s.const 1))) (br 0)))"
+      wbty sign winame (visit#expr e2) (visit#block blk) winame wbty winame wbty
+    )
+    
+  (* only works if e1 < e2 *)
+  method fast_range_for wbty sign winame e2 blk = 
+    (sprintf 
+      "(loop %s (set_local %s (%s.add (get_local %s) (%s.const 1))) (br_if 0 (%s.lt_%s (get_local %s) %s)))"
+      (visit#block blk) winame wbty winame wbty wbty sign winame (visit#expr e2)
+    )
+  
+  method range_for i bty e1 e2 blk =
+    let res = ref "" in
+    let sign = (if (Tast_util.is_signed bty) then "s" else "u") in
+    let iname = i.data in
+    let wbty = visit#bty bty in
+    let winame = wasm_label iname in
+    append res (sprintf "(set_local %s %s) "
+      (wasm_label iname) (visit#expr e1)
+    );
+    let (v1, _) = e1 in
+    let (v2, _) = e2 in
+    let e1' = v1.data in
+    let e2' = v2.data in
+    append res (
+      match e1', e2' with
+      | IntLiteral i1, IntLiteral i2 ->
+        if i1 < i2 then 
+          (visit#fast_range_for wbty sign winame e2 blk)
+        else 
+          (visit#slow_range_for wbty sign winame e2 blk)
+      | _, _ -> (visit#slow_range_for wbty sign winame e2 blk)
+    );
+    
+    res.contents
+
   method block ({pos=p; data}, next) = 
     let res = ref "" in
     begin
@@ -428,17 +470,7 @@ class wasm (m: Tast.fact_module) =
             (visit#block elses)
           )
         | RangeFor (i, bty, e1, e2, blk) -> 
-          let sign = (if (Tast_util.is_signed bty) then "s" else "u") in
-          let iname = i.data in
-          let wbty = visit#bty bty in
-          let winame = wasm_label iname in
-          append res (sprintf "(set_local %s %s) "
-            (wasm_label iname) (visit#expr e1)
-          );
-          append res (sprintf 
-            "(block (loop (br_if 1 (%s.ge_%s (get_local %s) %s)) %s (set_local %s (%s.add (get_local %s) (%s.const 1))) (br 0)))"
-            wbty sign winame (visit#expr e2) (visit#block blk) winame wbty winame wbty
-          )
+          append res (visit#range_for i bty e1 e2 blk)
         | _ -> append res (sprintf "(unimp %s)" (show_block' data))
     end;
     append res (visit#next next);

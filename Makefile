@@ -7,6 +7,8 @@ factc: build
 
 SETUP = ocaml setup.ml
 
+BUILDFLAGS = -no-hygiene
+
 build: setup.data
 	$(SETUP) -build $(BUILDFLAGS)
 

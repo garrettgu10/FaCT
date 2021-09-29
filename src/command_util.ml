@@ -235,6 +235,9 @@ let compile (in_files,out_file,out_dir) args =
   let tast = Transbranch.transform tast in (* transform secret branchs *)
     output_tast args.ast_out out_file' tast;
     generate_pseudo args.pseudo_out out_file' tast;
+  let tast = Peephole.transform tast in
+    output_tast args.ast_out out_file' tast;
+    generate_pseudo args.pseudo_out out_file' tast;
   let tast = Sanitycheck.transform true tast in (* check that everything is correct after transforms *)
     output_tast args.ast_out out_file' tast;
     output_wasm args.wasm_out out_file' tast;
